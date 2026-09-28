@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prison Escape: Blindspot</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        canvas {
+            background-color: #1e293b;
+            border: 4px solid #334155;
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            cursor: crosshair;
+        }
+        #ui-panel {
+            width: 800px;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+        .box {
+            background: #1e293b;
+            padding: 10px 20px;
+            border: 2px solid #334155;
+            border-radius: 6px;
+        }
+        kbd {
+            background: #334155;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #38bdf8;
+        }
+        .text-blue { color: #38bdf8; font-weight: bold; }
+        .text-yellow { color: #facc15; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <div class="box">
+            <div style="font-size: 12px; color: #94a3b8;">GÓC KÍNH CỦA BẠN</div>
+            <div style="font-size: 24px;" class="text-blue"><span id="glasses-angle">0</span>°</div>
+        </div>
+        <div class="box" style="text-align: right;">
+            <div style="font-size: 12px; color: #94a3b8;">TRẠNG THÁI ĐÈN PHA</div>
+            <div style="font-size: 24px;" class="text-yellow" id="light-state">Ánh sáng thường (Chói)</div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
+
+    <div style="margin-top: 15px; color: #94a3b8; text-align: center; line-height: 1.6;">
+        Di chuyển: <kbd>A</kbd> <kbd>D</kbd> | Nhảy: <kbd>W</kbd> | Xoay kính: <kbd>Q</kbd> / <kbd>E</kbd><br>
+        1. <b>Click chuột</b> vào đèn pha để bắn phim phân cực (đổi thành góc 45°).<br>
+        2. Xoay kính của bạn vuông góc (135°) để xóa điểm mù và nhìn thấy bẫy!
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const uiGlassesAngle = document.getElementById('glasses-angle');
+        const uiLightState = document.getElementById('light-state');
+
+        // Input
+        const keys = {};
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        // State
+        let glassesAngle = 0;
+        let isLightPolarized = false;
+        const lightPolarizationAngle = 45; // Góc cố định khi dán phim
+        let gameState = 'playing'; // playing, dead, win
+
+        // Đối tượng
+        const player = { x: 50, y: 400, w: 30, h: 40, vx: 0, vy: 0, speed: 250, jumpPower: -400, grounded: false };
+        const lightSource = { x: 400, y: 50, radius: 40 };
+        const exitDoor = { x: 730, y: 350, w: 50, h: 100 };
+        const spikes = [
+            { x: 300, y: 430, w: 200, h: 20 }
+        ];
+
+        // Tương tác click chuột vào đèn
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const dist = Math.hypot(mouseX - lightSource.x, mouseY - lightSource.y);
+            if (dist < lightSource.radius + 20) {
+                isLightPolarized = true;
+                uiLightState.innerText = "Phân cực (45°)";
+                uiLightState.style.color = "#4ade80"; // Màu xanh lá báo hiệu đã hack
+            }
+        });
+
+        function reset() {
+            player.x = 50; player.y = 400; player.vx = 0; player.vy = 0;
+            isLightPolarized = false;
+            glassesAngle = 0;
+            uiLightState.innerText = "Ánh sáng thường (Chói)";
+            uiLightState.style.color = "#facc15";
+            gameState = 'playing';
+        }
+
+        let lastTime = 0;
+        function update(delta) {
+            if (gameState !== 'playing') {
+                if (keys['Space']) reset();
+                return;
+            }
+
+            // Xoay kính
+            if (keys['KeyQ']) glassesAngle -= 150 * delta;
+            if (keys['KeyE']) glassesAngle += 150 * delta;
+            if (glassesAngle < 0) glassesAngle += 180;
+            if (glassesAngle >= 180) glassesAngle -= 180;
+            uiGlassesAngle.innerText = Math.round(glassesAngle);
+
+            // Di chuyển
+            player.vx = 0;
+            if (keys['KeyA']) player.vx = -player.speed;
+            if (keys['KeyD']) player.vx = player.speed;
+
+            // Nhảy & Trọng lực
+            player.vy += 1200 * delta; // Gravity
+            if (keys['KeyW'] && player.grounded) {
+                player.vy = player.jumpPower;
+                player.grounded = false;
+            }
+
+            player.x += player.vx * delta;
+            player.y += player.vy * delta;
+
+            // Va chạm sàn
+            const floorY = 450;
+            if (player.y + player.h >= floorY) {
+                player.y = floorY - player.h;
+                player.vy = 0;
+                player.grounded = true;
+            }
+
+            // Chặn viền màn hình
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.w > canvas.width) player.x = canvas.width - player.w;
+
+            // Kiểm tra bẫy
+            spikes.forEach(s => {
+                if (player.x < s.x + s.w && player.x + player.w > s.x &&
+                    player.y < s.y + s.h && player.y + player.h > s.y) {
+                    gameState = 'dead';
+                }
+            });
+
+            // Kiểm tra thắng
+            if (player.x < exitDoor.x + exitDoor.w && player.x + player.w > exitDoor.x &&
+                player.y < exitDoor.y + exitDoor.h && player.y + player.h > exitDoor.y) {
+                gameState = 'win';
+            }
+        }
+
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Vẽ sàn
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(0, 450, canvas.width, 50);
+
+            // Vẽ cửa thoát
+            ctx.fillStyle = '#16a34a';
+            ctx.fillRect(exitDoor.x, exitDoor.y, exitDoor.w, exitDoor.h);
+            ctx.fillStyle = '#fff';
+            ctx.font = '14px sans-serif';
+            ctx.fillText("EXIT", exitDoor.x + 10, exitDoor.y + 50);
+
+            // Vẽ gai (Chướng ngại vật)
+            ctx.fillStyle = '#ef4444';
+            spikes.forEach(s => {
+                for (let i = 0; i < s.w; i += 20) {
+                    ctx.beginPath();
+                    ctx.moveTo(s.x + i, s.y + s.h);
+                    ctx.lineTo(s.x + i + 10, s.y);
+                    ctx.lineTo(s.x + i + 20, s.y + s.h);
+                    ctx.fill();
+                }
+            });
+
+            // Vẽ Player
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillRect(player.x, player.y, player.w, player.h);
+
+            // === HỆ THỐNG ÁNH SÁNG ===
+            let lightIntensity = 1.0; // Ánh sáng thường = 100% chói
+
+            if (isLightPolarized) {
+                // Tính toán cường độ theo định luật Malus (Góc kính vs Góc đèn)
+                const angleDiff = (glassesAngle - lightPolarizationAngle) * Math.PI / 180;
+                lightIntensity = Math.pow(Math.cos(angleDiff), 2);
+            }
+
+            // Vẽ nón ánh sáng chói che khuất bẫy
+            if (lightIntensity > 0.05) {
+                const gradient = ctx.createLinearGradient(0, lightSource.y, 0, 450);
+                gradient.addColorStop(0, `rgba(253, 224, 71, ${lightIntensity * 0.9})`);
+                gradient.addColorStop(1, `rgba(253, 224, 71, ${lightIntensity * 1.0})`);
+                
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.moveTo(lightSource.x, lightSource.y);
+                ctx.lineTo(150, 450); // Mở rộng nón sáng xuống sàn
+                ctx.lineTo(650, 450);
+                ctx.fill();
+            }
+
+            // Vẽ cục đèn pha
+            ctx.fillStyle = isLightPolarized ? '#4ade80' : '#facc15';
+            ctx.beginPath();
+            ctx.arc(lightSource.x, lightSource.y, lightSource.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Vẽ sọc phân cực trên đèn nếu đã bị bắn phim
+            if (isLightPolarized) {
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                const rad = lightPolarizationAngle * Math.PI / 180;
+                ctx.moveTo(lightSource.x - Math.cos(rad)*30, lightSource.y - Math.sin(rad)*30);
+                ctx.lineTo(lightSource.x + Math.cos(rad)*30, lightSource.y + Math.sin(rad)*30);
+                ctx.stroke();
+            }
+
+            // Trạng thái kết thúc
+            if (gameState !== 'playing') {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0,0,canvas.width,canvas.height);
+                ctx.fillStyle = gameState === 'win' ? '#4ade80' : '#ef4444';
+                ctx.font = 'bold 40px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(gameState === 'win' ? 'ESCAPED!' : 'YOU DIED!', canvas.width/2, 250);
+                ctx.font = '20px sans-serif';
+                ctx.fillStyle = '#fff';
+                ctx.fillText('Nhấn SPACE để chơi lại', canvas.width/2, 300);
+            }
+        }
+
+        function loop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const delta = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+
+            update(delta);
+            render();
+            requestAnimationFrame(loop);
+        }
+        requestAnimationFrame(loop);
+    </script>
+</body>
+</html>
